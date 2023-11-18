@@ -144,6 +144,7 @@ import { defineComponent } from "vue";
 import { useLoginUserStore } from "../stores/loginUserStrore";
 import { Notify } from "quasar";
 import DialogComponent from "src/components/DialogComponent.vue";
+
 export default defineComponent({
   name: "ListUserPage",
   data() {
@@ -176,7 +177,7 @@ export default defineComponent({
       ],
       paginations: { rowsPerPage: 7 },
       storeLogUser: useLoginUserStore(),
-      input: [],
+      input: {},
       form_edit: false,
       form_delete: false,
       showDialog: false,
@@ -191,20 +192,16 @@ export default defineComponent({
   },
   methods: {
     getAllUsers() {
-      const headers = {
-        "x-access-token": this.storeLogUser.accessToken,
-      };
+      const headers = { "x-access-token": this.storeLogUser.accessToken };
+
       this.$api
         .get("/auth", { headers })
         .then((res) => {
-          if (res.status == 200) {
-            res.data.forEach((item, key) => {
-              if (item.img != null) {
-                res.data[key].img =
-                  this.$RESTAPI + "/file/" + res.data[key].img;
-              }
-            });
-            this.rows = res.data;
+          if (res.status === 200) {
+            this.rows = res.data.map((item) => ({
+              ...item,
+              img: item.img ? `${this.$RESTAPI}/file/${item.img}` : null,
+            }));
           }
         })
         .catch((err) => {
@@ -223,23 +220,21 @@ export default defineComponent({
     },
     deleteRecord(record) {
       this.input = record;
-      console.log("Deleting user with ID:", this.input.id);
       this.form_delete = true;
     },
     onDelete() {
-      // console.log("This is onDelete method");
-      const headers = {
-        "x-access-token": this.storeLogUser.accessToken,
-      };
+      const headers = { "x-access-token": this.storeLogUser.accessToken };
+
       this.$api
-        .delete("/auth/" + this.input.id, { headers })
+        .delete(`/auth/${this.input.id}`, { headers })
         .then((res) => {
-          if (res.status == 200) {
+          if (res.status === 200) {
             Notify.create({
               type: "positive",
-              message: "Deleted user ID: " + res.data.id,
+              message: `Deleted user ID: ${res.data.id}`,
             });
-            if (this.storeLogUser.userid == res.data.id) {
+
+            if (this.storeLogUser.userid === res.data.id) {
               this.storeLogUser.clearStorage();
               this.$router.push("/");
             } else {
@@ -260,92 +255,82 @@ export default defineComponent({
       this.dialog.btnType = "Error";
     },
     onRejected(rejectedEntries) {
-      let msg;
-      if (rejectedEntries[0].failedPropValidation == "accept")
-        msg = "Only images (jpg, jpeg, png) are allowed";
-      else if (rejectedEntries[0].failedPropValidation == "max-file-size")
-        msg = "File size cannot be larger than 1MB";
+      const msg =
+        rejectedEntries[0].failedPropValidation === "accept"
+          ? "Only images (jpg, jpeg, png) are allowed"
+          : "File size cannot be larger than 1MB";
+
       Notify.create({
         type: "negative",
         message: msg,
       });
     },
     updateFile() {
-      this.input.img = URL.createObjectURL(this.uploadFile);
+      this.input.img = this.uploadFile
+        ? URL.createObjectURL(this.uploadFile)
+        : null;
     },
     onCancelEdit() {
       this.getAllUsers();
     },
-    onEdit() {
-      // console.log("this is onEdit method");
-      if (this.uploadFile == "") this.uploadFile = null;
-      if (this.uploadFile) {
-        // upload new image
-        const headers = {
-          "Content-Type": "multipart/form-data",
-        };
-        const formData = new FormData();
-        formData.append("singlefile", this.uploadFile);
-        this.$api
-          .post("/file/upload", formData, { headers })
-          .then((response) => {
-            if (response.status == 200) {
-              // call user edit API
-              this.submitEditData(response.data.uploadFileName);
-              this.updateFile = null;
-              this.uploadFile = null;
-            }
-          })
-          .catch((err) => {
-            console.log(err);
-            this.showErrDialog(err);
-          });
-      } else {
-        // NOT upload any images
-        this.submitEditData();
+    async onEdit() {
+      try {
+        if (this.uploadFile) {
+          const response = await this.uploadImage();
+
+          if (response.status === 200) {
+            await this.submitEditData(response.data.uploadFileName);
+          }
+        } else {
+          await this.submitEditData();
+        }
+
+        this.getAllUsers();
+      } catch (err) {
+        console.log(err);
+        this.showErrDialog(err);
       }
-      this.getAllUsers;
     },
-    getFileName() {
-      return filepath.substr(filepath.lastIndexOf("/") + 1);
+    async uploadImage() {
+      const headers = { "Content-Type": "multipart/form-data" };
+      const formData = new FormData();
+      formData.append("singlefile", this.uploadFile);
+
+      return this.$api.post("/file/upload", formData, { headers });
     },
-    submitEditData(filename) {
-      let img = "";
-      if (filename == null) {
-        if (this.input.img == null) img = null;
-        else img = this.getFileName(this.input.img);
-      } else img = filename;
+    async submitEditData(filename) {
+      const img =
+        filename || (this.input.img ? this.getFileName(this.input.img) : null);
       const data = {
         fullname: this.input.fullname,
         email: this.input.email,
-        img: img,
+        img,
       };
-      const headers = {
-        "x-access-token": this.storeLogUser.accessToken,
-      };
-      this.$api
-        .put("/auth/" + this.input.id, data, { headers })
-        .then((res) => {
-          if (res.status == 200) {
-            Notify.create({
-              type: "positive",
-              message: "Updated user ID: " + res.data.id,
-            });
-            if (this.storeLogUser.userid == res.data.id) {
-              this.storeLogUser.fullname = res.data.fullname;
-              if (res.data.img != null && this.updateFile == null) {
-                this.storeLogUser.avatar =
-                  this.$RESTAPI + "/file/" + res.data.img;
-              } else {
-                this.storeLogUser.avatar = "default-avatar.png";
-              }
-            }
-          }
-        })
-        .catch((err) => {
-          console.log(err);
-          this.showErrDialog(err);
+      const headers = { "x-access-token": this.storeLogUser.accessToken };
+
+      const res = await this.$api.put(`/auth/${this.input.id}`, data, {
+        headers,
+      });
+
+      if (res.status === 200) {
+        Notify.create({
+          type: "positive",
+          message: `Updated user ID: ${res.data.id}`,
         });
+
+        if (this.storeLogUser.userid === res.data.id) {
+          this.storeLogUser.fullname = res.data.fullname;
+
+          if (res.data.img && !this.uploadFile) {
+            this.storeLogUser.avatar = `${this.$RESTAPI}/file/${res.data.img}`;
+          } else {
+            this.storeLogUser.avatar = "default-avatar.png";
+          }
+        }
+      }
+    },
+    getFileName() {
+      return this.input.img.substr(this.input.img.lastIndexOf("/") + 1);
     },
   },
   async mounted() {
